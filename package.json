@@ -8,6 +8,7 @@
     "clean": "rimraf dist",
     "prestart": "npm run clean && npm run build",
     "start": "func start",
+    "dev": "func start --typescript --watch",
     "test": "echo \"No tests yet...\""
   },
   "dependencies": {
