@@ -498,7 +498,7 @@ export async function RemoveTermsFromSet(
 
     return {
       status: 200,
-      body: JSON.stringify("Terms removed successfully"),
+      body: JSON.stringify("Terms removed from set successfully"),
       headers: { "Content-Type": "application/json", ...corsHeaders },
     };
   } catch (error) {
