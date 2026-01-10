@@ -502,7 +502,7 @@ export async function RemoveTermsFromSet(
       headers: { "Content-Type": "application/json", ...corsHeaders },
     };
   } catch (error) {
-    context.log("Error in RemoveTermsFromSet:", error);
+    context.log("Error in Remove Terms From Set:", error);
     return {
       status: 500,
       body: "Internal server error",
