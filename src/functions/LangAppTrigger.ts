@@ -12,7 +12,7 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization",
 };
 
-export async function LangAppTrigger(
+export async function GetDataForLang(
   request: HttpRequest,
   context: InvocationContext
 ): Promise<HttpResponseInit> {
@@ -78,29 +78,39 @@ export async function LangAppTrigger(
     });
     const wantedFields = ["Word", "Definition", "Class"];
     for await (const entity of listResults) {
-      if (language === "japanese") {
-        entities.push({
-          word: entity.word,
-          reading: entity.reading,
-          type: entity.type,
-          class: entity.class,
-        });
-      } else {
-        entities.push({
-          word: entity.word,
-          definition: entity.definition,
-          class: entity.class,
-        });
-      }
+      entities.push(entity);
     }
 
-    // osrt by type for japanese
+    // sort by type for japanese
     if (language === "japanese") {
-      entities.sort((a, b) => {
-        if (a.type < b.type) return -1;
-        if (a.type > b.type) return 1;
-        return 0;
-      });
+      // Group entities by type
+      const typeGroups = new Map<string, any[]>();
+      
+      for (const entity of entities) {
+        const type = entity.type || 'unknown';
+        if (!typeGroups.has(type)) {
+          typeGroups.set(type, []);
+        }
+        typeGroups.get(type)!.push(entity);
+      }
+      
+      // Sort each group by word and combine back
+      entities.length = 0; // Clear the original array
+      
+      // Sort the type groups by type name first
+      const sortedTypes = Array.from(typeGroups.keys()).sort();
+      
+      for (const type of sortedTypes) {
+        const group = typeGroups.get(type)!;
+        // Sort each group by word field
+        group.sort((a, b) => {
+          const wordA = (a.Word || a.word || '').toString().toLowerCase();
+          const wordB = (b.Word || b.word || '').toString().toLowerCase();
+          return wordA.localeCompare(wordB);
+        });
+        // Add the sorted group back to entities
+        entities.push(...group);
+      }
     }
     // Apply pagination
     const startIndex = (page - 1) * limit;
@@ -188,11 +198,11 @@ export async function ReturnSizeOfData(
   }
 }
 
-app.http("LangAppTrigger", {
+app.http("GetDataForLang", {
   methods: ["GET"],
   authLevel: "anonymous",
   route: "data/fetch/{language}",
-  handler: LangAppTrigger,
+  handler: GetDataForLang,
 });
 
 // Route Function: ReturnSizeOfData
