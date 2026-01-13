@@ -5,13 +5,7 @@ import {
   InvocationContext,
 } from "@azure/functions";
 import { setsTable } from "../db/setsTable";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "https://brave-pebble-004d8cf0f.1.azurestaticapps.net",
-  "Access-Control-Allow-Methods": "GET,POST,PUT,DELETE,OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization",
-};
-
+import corsHeaders from "../utils/corsHeader";
 type createSetRequestBody = {
   data: {
     partitionKey: string;

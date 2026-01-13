@@ -5,12 +5,7 @@ import {
   InvocationContext,
 } from "@azure/functions";
 import { wordsTable } from "../db/wordsTable";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "https://brave-pebble-004d8cf0f.1.azurestaticapps.net",
-  "Access-Control-Allow-Methods": "GET,POST,PUT,DELETE,OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization",
-};
+import corsHeaders from "../utils/corsHeader";
 
 export async function GetDataForLang(
   request: HttpRequest,
@@ -23,22 +18,46 @@ export async function GetDataForLang(
     const language = request.params.language;
     const pageParam = request.query.get("page");
     const limitParam = request.query.get("limit");
+    const classParam = request.query.get("class");
+    const class2Param = request.query.get("class2");
 
     const page = pageParam ? parseInt(pageParam, 10) : 1;
     const limit = limitParam ? parseInt(limitParam, 10) : 10;
+
+    // Parse filter parameters
+    const filters: any = {};
+    if (classParam) {
+      // Support comma-separated values for multiple class filters
+      filters.class = classParam
+        .split(",")
+        .map((c) => c.trim())
+        .filter((c) => c.length > 0);
+    }
+    if (class2Param) {
+      // Support comma-separated values for multiple class2 filters
+      filters.class2 = class2Param
+        .split(",")
+        .map((c) => c.trim())
+        .filter((c) => c.length > 0);
+    }
 
     // Use the wordsTable to get data
     const result = await wordsTable.getDataForLanguage(language, {
       page,
       limit,
-      sortForJapanese: language === "japanese"
+      sortForJapanese: language === "japanese",
+      filters: Object.keys(filters).length > 0 ? filters : undefined,
     });
 
     // Handle error responses
-    if ('error' in result) {
-      const status = result.error === "Invalid language" ? 404 : 
-                    result.error === "Page and limit must be positive numbers" ? 400 : 500;
-      
+    if ("error" in result) {
+      const status =
+        result.error === "Invalid language"
+          ? 404
+          : result.error === "Page and limit must be positive numbers"
+          ? 400
+          : 500;
+
       return {
         status,
         body: JSON.stringify({ error: result.error }),
@@ -46,10 +65,27 @@ export async function GetDataForLang(
       };
     }
 
-    // Return successful response
+    // Return enterprise-standard response with pagination and filter metadata
+    const response = {
+      data: result.data,
+      pagination: {
+        page: result.page,
+        limit: result.limit,
+        total: result.total,
+        totalFiltered: result.totalFiltered,
+        hasNext: result.page * result.limit < result.totalFiltered,
+        hasPrevious: result.page > 1,
+      },
+      filters: {
+        applied: result.appliedFilters || {},
+        available: result.availableFilters || { class: [], class2: [] },
+      },
+      language: language,
+    };
+
     return {
       status: 200,
-      body: JSON.stringify(result.data),
+      body: JSON.stringify(response),
       headers: { "Content-Type": "application/json", ...corsHeaders },
     };
   } catch (error) {
@@ -76,9 +112,9 @@ export async function ReturnSizeOfData(
     const result = await wordsTable.getCountForLanguage(language);
 
     // Handle error response
-    if (typeof result === 'object' && 'error' in result) {
+    if (typeof result === "object" && "error" in result) {
       const status = result.error === "Invalid language" ? 404 : 500;
-      
+
       return {
         status,
         body: JSON.stringify({ error: result.error }),
@@ -101,7 +137,7 @@ export async function ReturnSizeOfData(
     };
   }
 }
- 
+
 app.http("GetDataForLang", {
   methods: ["GET"],
   authLevel: "anonymous",
