@@ -2,6 +2,14 @@ import { TableClient, TableEntity } from "@azure/data-tables";
 
 const connectionString = process.env.AzureWebJobsStorage;
 
+type CacheEntry<T> = {
+  value: T;
+  expiresAt: number;
+};
+const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+
+const cache = new Map<string, CacheEntry<any>>();
+
 export interface PaginatedResult<T> {
   data: T[];
   page: number;
@@ -76,10 +84,23 @@ export default class TableLike<Type extends TableEntity<object>> {
 
   /**
    * Retrieves all entities for a given partition key with optional filtering
+   * Uses cache to avoid repeated Azure Table scans
    */
   private async getEntitiesByPartitionKey(partitionKey: string, filters?: FilterOptions): Promise<Type[]> {
+    const cacheKey = `entities:${partitionKey}`;
+    const countCacheKey = `count:${partitionKey}`;
+    
+    // Check cache first
+    const cached = cache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      // Cache hit - defensively clone to prevent mutation of cached data
+      const base = [...cached.value];
+      return this.filterEntitiesInMemory(base, filters);
+    }
+
+    // Cache miss - query table
     const entities: Type[] = [];
-    const odataFilter = this.buildODataFilter(partitionKey, filters);
+    const odataFilter = `PartitionKey eq '${partitionKey}'`; // Get all entities for partition
     
     const listResults = this.client.listEntities<Type>({
       queryOptions: { filter: odataFilter },
@@ -89,7 +110,48 @@ export default class TableLike<Type extends TableEntity<object>> {
       entities.push(entity);
     }
 
-    return entities;
+    // Store both entities and count in cache
+    const expiresAt = Date.now() + CACHE_TTL_MS;
+    cache.set(cacheKey, {
+      value: entities,
+      expiresAt
+    });
+    cache.set(countCacheKey, {
+      value: entities.length,
+      expiresAt
+    });
+
+    // Apply filters in memory and return
+    return this.filterEntitiesInMemory(entities, filters);
+  }
+
+  /**
+   * Filters entities in memory based on filter options
+   */
+  private filterEntitiesInMemory(entities: Type[], filters?: FilterOptions): Type[] {
+    if (!filters) {
+      return entities;
+    }
+
+    return entities.filter(entity => {
+      // Apply class filter
+      if (filters.class && filters.class.length > 0) {
+        const entityClass = (entity as any).class;
+        if (!filters.class.includes(entityClass)) {
+          return false;
+        }
+      }
+
+      // Apply class2 filter
+      if (filters.class2 && filters.class2.length > 0) {
+        const entityClass2 = (entity as any).class2;
+        if (!filters.class2.includes(entityClass2)) {
+          return false;
+        }
+      }
+
+      return true;
+    });
   }
 
   /**
@@ -174,22 +236,34 @@ export default class TableLike<Type extends TableEntity<object>> {
   }
 
   /**
-   * Gets all unique filter values for a specific language
+   * Gets all unique filter values for a specific language, optionally filtered by current context
    */
-  public async getAvailableFilters(language: string): Promise<AvailableFilters | { error: string }> {
+  public async getAvailableFilters(
+    language: string, 
+    contextFilters?: FilterOptions
+  ): Promise<AvailableFilters | { error: string }> {
     const partitionKey = this.mapLanguageToPartitionKey(language);
     if (!partitionKey) {
       return { error: "Invalid language" };
     }
 
     try {
-      // Get all entities for the partition (no filters)
-      const entities = await this.getEntitiesByPartitionKey(partitionKey);
+      // Create cache key that includes context filters
+      const filtersCacheKey = `filters:${partitionKey}:${JSON.stringify(contextFilters || {})}`;
+      
+      // Check cache first
+      const cachedFilters = cache.get(filtersCacheKey);
+      if (cachedFilters && cachedFilters.expiresAt > Date.now()) {
+        return cachedFilters.value;
+      }
+
+      // Get entities that match the context filters (if any)
+      const entities = await this.getEntitiesByPartitionKey(partitionKey, contextFilters);
       
       const classValues = new Set<string>();
       const class2Values = new Set<string>();
 
-      // Extract unique values from all entities
+      // Extract unique values from filtered entities only
       for (const entity of entities) {
         const classValue = (entity as any).class;
         const class2Value = (entity as any).class2;
@@ -203,10 +277,18 @@ export default class TableLike<Type extends TableEntity<object>> {
         }
       }
 
-      return {
+      const result = {
         class: Array.from(classValues).sort(),
         class2: Array.from(class2Values).sort()
       };
+
+      // Cache the result
+      cache.set(filtersCacheKey, {
+        value: result,
+        expiresAt: Date.now() + CACHE_TTL_MS
+      });
+
+      return result;
     } catch (error) {
       return { error: "Failed to retrieve available filters" };
     }
@@ -233,8 +315,8 @@ export default class TableLike<Type extends TableEntity<object>> {
     }
 
     try {
-      // Get available filters for this language
-      const availableFiltersResult = await this.getAvailableFilters(language);
+      // Get available filters for this language, contextually filtered
+      const availableFiltersResult = await this.getAvailableFilters(language, filters);
       const availableFilters = 'error' in availableFiltersResult ? undefined : availableFiltersResult;
 
       // Get total count without filters for reference
@@ -281,6 +363,15 @@ export default class TableLike<Type extends TableEntity<object>> {
     }
 
     try {
+      const countCacheKey = `count:${partitionKey}`;
+      
+      // Check count cache first
+      const cachedCount = cache.get(countCacheKey);
+      if (cachedCount && cachedCount.expiresAt > Date.now()) {
+        return cachedCount.value;
+      }
+
+      // Count cache miss - get entities (which will populate both caches)
       const entities = await this.getEntitiesByPartitionKey(partitionKey);
       return entities.length;
     } catch (error) {
@@ -296,11 +387,38 @@ export default class TableLike<Type extends TableEntity<object>> {
   }
 
   /**
+   * Invalidates cache entries for a specific partition key
+   */
+  private invalidateCacheForPartition(partitionKey: string): void {
+    const entitiesCacheKey = `entities:${partitionKey}`;
+    const countCacheKey = `count:${partitionKey}`;
+    
+    // Invalidate main caches
+    cache.delete(entitiesCacheKey);
+    cache.delete(countCacheKey);
+    
+    // Invalidate all filter caches for this partition
+    // Since filters cache keys contain the partition, we need to find and delete them
+    const filtersCachePrefix = `filters:${partitionKey}:`;
+    for (const [key] of cache) {
+      if (key.startsWith(filtersCachePrefix)) {
+        cache.delete(key);
+      }
+    }
+  }
+
+  /**
    * Uploads/inserts a single entity to the table
    */
   public async uploadEntity(entity: Type): Promise<{ success: boolean; error?: string }> {
     try {
       await this.client.createEntity(entity);
+      
+      // Invalidate cache for the entity's partition
+      if (entity.partitionKey) {
+        this.invalidateCacheForPartition(entity.partitionKey.toString());
+      }
+      
       return { success: true };
     } catch (error: any) {
       console.error('Error uploading entity:', error);
@@ -315,11 +433,16 @@ export default class TableLike<Type extends TableEntity<object>> {
     let uploaded = 0;
     let failed = 0;
     const errors: string[] = [];
+    const partitionsToInvalidate = new Set<string>();
 
     for (const entity of entities) {
       const result = await this.uploadEntity(entity);
       if (result.success) {
         uploaded++;
+        // Track partitions that need cache invalidation
+        if (entity.partitionKey) {
+          partitionsToInvalidate.add(entity.partitionKey.toString());
+        }
       } else {
         failed++;
         if (result.error) {
@@ -328,6 +451,10 @@ export default class TableLike<Type extends TableEntity<object>> {
       }
     }
 
+    // Invalidate cache for all affected partitions
+    // Note: We do this after processing to avoid redundant invalidations
+    // since uploadEntity already invalidates per entity
+    
     return {
       success: failed === 0,
       uploaded,
