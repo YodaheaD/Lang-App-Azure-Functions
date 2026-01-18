@@ -19,7 +19,6 @@ export interface PaginatedResult<T> {
   appliedFilters?: FilterOptions;
   availableFilters?: AvailableFilters;
 }
-
 export interface FilterOptions {
   class?: string[];
   class2?: string[];
@@ -64,32 +63,42 @@ export default class TableLike<Type extends TableEntity<object>> {
   /**
    * Builds OData filter string from filter options
    */
-  private buildODataFilter(partitionKey: string, filters?: FilterOptions): string {
+  private buildODataFilter(
+    partitionKey: string,
+    filters?: FilterOptions
+  ): string {
     let filterParts = [`PartitionKey eq '${partitionKey}'`];
 
     if (filters) {
       if (filters.class && filters.class.length > 0) {
-        const classFilters = filters.class.map(c => `class eq '${c.replace(/'/g, "''")}'`);
-        filterParts.push(`(${classFilters.join(' or ')})`);
+        const classFilters = filters.class.map(
+          (c) => `class eq '${c.replace(/'/g, "''")}'`
+        );
+        filterParts.push(`(${classFilters.join(" or ")})`);
       }
 
       if (filters.class2 && filters.class2.length > 0) {
-        const class2Filters = filters.class2.map(c => `class2 eq '${c.replace(/'/g, "''")}'`);
-        filterParts.push(`(${class2Filters.join(' or ')})`);
+        const class2Filters = filters.class2.map(
+          (c) => `class2 eq '${c.replace(/'/g, "''")}'`
+        );
+        filterParts.push(`(${class2Filters.join(" or ")})`);
       }
     }
 
-    return filterParts.join(' and ');
+    return filterParts.join(" and ");
   }
 
   /**
    * Retrieves all entities for a given partition key with optional filtering
    * Uses cache to avoid repeated Azure Table scans
    */
-  private async getEntitiesByPartitionKey(partitionKey: string, filters?: FilterOptions): Promise<Type[]> {
+  private async getEntitiesByPartitionKey(
+    partitionKey: string,
+    filters?: FilterOptions
+  ): Promise<Type[]> {
     const cacheKey = `entities:${partitionKey}`;
     const countCacheKey = `count:${partitionKey}`;
-    
+
     // Check cache first
     const cached = cache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) {
@@ -101,7 +110,7 @@ export default class TableLike<Type extends TableEntity<object>> {
     // Cache miss - query table
     const entities: Type[] = [];
     const odataFilter = `PartitionKey eq '${partitionKey}'`; // Get all entities for partition
-    
+
     const listResults = this.client.listEntities<Type>({
       queryOptions: { filter: odataFilter },
     });
@@ -114,11 +123,11 @@ export default class TableLike<Type extends TableEntity<object>> {
     const expiresAt = Date.now() + CACHE_TTL_MS;
     cache.set(cacheKey, {
       value: entities,
-      expiresAt
+      expiresAt,
     });
     cache.set(countCacheKey, {
       value: entities.length,
-      expiresAt
+      expiresAt,
     });
 
     // Apply filters in memory and return
@@ -128,12 +137,15 @@ export default class TableLike<Type extends TableEntity<object>> {
   /**
    * Filters entities in memory based on filter options
    */
-  private filterEntitiesInMemory(entities: Type[], filters?: FilterOptions): Type[] {
+  private filterEntitiesInMemory(
+    entities: Type[],
+    filters?: FilterOptions
+  ): Type[] {
     if (!filters) {
       return entities;
     }
 
-    return entities.filter(entity => {
+    return entities.filter((entity) => {
       // Apply class filter
       if (filters.class && filters.class.length > 0) {
         const entityClass = (entity as any).class;
@@ -160,27 +172,31 @@ export default class TableLike<Type extends TableEntity<object>> {
   private sortJapaneseEntities(entities: Type[]): Type[] {
     // Group entities by type
     const typeGroups = new Map<string, Type[]>();
-    
+
     for (const entity of entities) {
-      const type = (entity as any).type || 'unknown';
+      const type = (entity as any).type || "unknown";
       if (!typeGroups.has(type)) {
         typeGroups.set(type, []);
       }
       typeGroups.get(type)!.push(entity);
     }
-    
+
     // Sort each group by word and combine back
     const sortedEntities: Type[] = [];
-    
+
     // Sort the type groups by type name first
     const sortedTypes = Array.from(typeGroups.keys()).sort();
-    
+
     for (const type of sortedTypes) {
       const group = typeGroups.get(type)!;
       // Sort each group by word field
       group.sort((a, b) => {
-        const wordA = ((a as any).Word || (a as any).word || '').toString().toLowerCase();
-        const wordB = ((b as any).Word || (b as any).word || '').toString().toLowerCase();
+        const wordA = ((a as any).Word || (a as any).word || "")
+          .toString()
+          .toLowerCase();
+        const wordB = ((b as any).Word || (b as any).word || "")
+          .toString()
+          .toLowerCase();
         return wordA.localeCompare(wordB);
       });
       // Add the sorted group back to entities
@@ -196,27 +212,31 @@ export default class TableLike<Type extends TableEntity<object>> {
   private sortEntitiesByClass(entities: Type[]): Type[] {
     // Group entities by class
     const classGroups = new Map<string, Type[]>();
-    
+
     for (const entity of entities) {
-      const classValue = (entity as any).class || 'unknown';
+      const classValue = (entity as any).class || "unknown";
       if (!classGroups.has(classValue)) {
         classGroups.set(classValue, []);
       }
       classGroups.get(classValue)!.push(entity);
     }
-    
+
     // Sort each group by word and combine back
     const sortedEntities: Type[] = [];
-    
+
     // Sort the class groups by class name first
     const sortedClasses = Array.from(classGroups.keys()).sort();
-    
+
     for (const classValue of sortedClasses) {
       const group = classGroups.get(classValue)!;
       // Sort each group by word field
       group.sort((a, b) => {
-        const wordA = ((a as any).Word || (a as any).word || '').toString().toLowerCase();
-        const wordB = ((b as any).Word || (b as any).word || '').toString().toLowerCase();
+        const wordA = ((a as any).Word || (a as any).word || "")
+          .toString()
+          .toLowerCase();
+        const wordB = ((b as any).Word || (b as any).word || "")
+          .toString()
+          .toLowerCase();
         return wordA.localeCompare(wordB);
       });
       // Add the sorted group back to entities
@@ -229,7 +249,11 @@ export default class TableLike<Type extends TableEntity<object>> {
   /**
    * Applies pagination to an array of entities
    */
-  private paginateEntities(entities: Type[], page: number, limit: number): Type[] {
+  private paginateEntities(
+    entities: Type[],
+    page: number,
+    limit: number
+  ): Type[] {
     const startIndex = (page - 1) * limit;
     const endIndex = startIndex + limit;
     return entities.slice(startIndex, endIndex);
@@ -239,7 +263,7 @@ export default class TableLike<Type extends TableEntity<object>> {
    * Gets all unique filter values for a specific language, optionally filtered by current context
    */
   public async getAvailableFilters(
-    language: string, 
+    language: string,
     contextFilters?: FilterOptions
   ): Promise<AvailableFilters | { error: string }> {
     const partitionKey = this.mapLanguageToPartitionKey(language);
@@ -249,8 +273,10 @@ export default class TableLike<Type extends TableEntity<object>> {
 
     try {
       // Create cache key that includes context filters
-      const filtersCacheKey = `filters:${partitionKey}:${JSON.stringify(contextFilters || {})}`;
-      
+      const filtersCacheKey = `filters:${partitionKey}:${JSON.stringify(
+        contextFilters || {}
+      )}`;
+
       // Check cache first
       const cachedFilters = cache.get(filtersCacheKey);
       if (cachedFilters && cachedFilters.expiresAt > Date.now()) {
@@ -258,8 +284,11 @@ export default class TableLike<Type extends TableEntity<object>> {
       }
 
       // Get entities that match the context filters (if any)
-      const entities = await this.getEntitiesByPartitionKey(partitionKey, contextFilters);
-      
+      const entities = await this.getEntitiesByPartitionKey(
+        partitionKey,
+        contextFilters
+      );
+
       const classValues = new Set<string>();
       const class2Values = new Set<string>();
 
@@ -267,25 +296,29 @@ export default class TableLike<Type extends TableEntity<object>> {
       for (const entity of entities) {
         const classValue = (entity as any).class;
         const class2Value = (entity as any).class2;
-        
-        if (classValue && typeof classValue === 'string' && classValue.trim()) {
+
+        if (classValue && typeof classValue === "string" && classValue.trim()) {
           classValues.add(classValue.trim());
         }
-        
-        if (class2Value && typeof class2Value === 'string' && class2Value.trim()) {
+
+        if (
+          class2Value &&
+          typeof class2Value === "string" &&
+          class2Value.trim()
+        ) {
           class2Values.add(class2Value.trim());
         }
       }
 
       const result = {
         class: Array.from(classValues).sort(),
-        class2: Array.from(class2Values).sort()
+        class2: Array.from(class2Values).sort(),
       };
 
       // Cache the result
       cache.set(filtersCacheKey, {
         value: result,
-        expiresAt: Date.now() + CACHE_TTL_MS
+        expiresAt: Date.now() + CACHE_TTL_MS,
       });
 
       return result;
@@ -316,15 +349,22 @@ export default class TableLike<Type extends TableEntity<object>> {
 
     try {
       // Get available filters for this language, contextually filtered
-      const availableFiltersResult = await this.getAvailableFilters(language, filters);
-      const availableFilters = 'error' in availableFiltersResult ? undefined : availableFiltersResult;
+      const availableFiltersResult = await this.getAvailableFilters(
+        language,
+        filters
+      );
+      const availableFilters =
+        "error" in availableFiltersResult ? undefined : availableFiltersResult;
 
       // Get total count without filters for reference
       const totalEntities = await this.getEntitiesByPartitionKey(partitionKey);
       const totalCount = totalEntities.length;
 
       // Get filtered entities
-      let entities = await this.getEntitiesByPartitionKey(partitionKey, filters);
+      let entities = await this.getEntitiesByPartitionKey(
+        partitionKey,
+        filters
+      );
       const filteredCount = entities.length;
 
       // Apply sorting for Japanese if requested
@@ -345,7 +385,34 @@ export default class TableLike<Type extends TableEntity<object>> {
         total: totalCount,
         totalFiltered: filteredCount,
         appliedFilters: filters,
-        availableFilters
+        availableFilters,
+      };
+    } catch (error) {
+      return { error: "Failed to retrieve data from storage" };
+    }
+  }
+
+  /**
+   * Given only the language, returns available filters without any data or pagination
+   */
+  public async getFiltersOnly(language: string): Promise<any> {
+    // Map language to partition key
+    const partitionKey = this.mapLanguageToPartitionKey(language);
+    if (!partitionKey) {
+      return { error: "Invalid language" };
+    }
+
+    try {
+      // Get available filters for this language, contextually filtered
+      const availableFiltersResult = await this.getAvailableFilters(
+        language,
+        {}
+      );
+      const availableFilters =
+        "error" in availableFiltersResult ? undefined : availableFiltersResult;
+
+      return {
+        availableFilters,
       };
     } catch (error) {
       return { error: "Failed to retrieve data from storage" };
@@ -355,7 +422,9 @@ export default class TableLike<Type extends TableEntity<object>> {
   /**
    * Gets the total count of entities for a specific language
    */
-  public async getCountForLanguage(language: string): Promise<number | { error: string }> {
+  public async getCountForLanguage(
+    language: string
+  ): Promise<number | { error: string }> {
     // Map language to partition key
     const partitionKey = this.mapLanguageToPartitionKey(language);
     if (!partitionKey) {
@@ -364,7 +433,7 @@ export default class TableLike<Type extends TableEntity<object>> {
 
     try {
       const countCacheKey = `count:${partitionKey}`;
-      
+
       // Check count cache first
       const cachedCount = cache.get(countCacheKey);
       if (cachedCount && cachedCount.expiresAt > Date.now()) {
@@ -392,11 +461,11 @@ export default class TableLike<Type extends TableEntity<object>> {
   private invalidateCacheForPartition(partitionKey: string): void {
     const entitiesCacheKey = `entities:${partitionKey}`;
     const countCacheKey = `count:${partitionKey}`;
-    
+
     // Invalidate main caches
     cache.delete(entitiesCacheKey);
     cache.delete(countCacheKey);
-    
+
     // Invalidate all filter caches for this partition
     // Since filters cache keys contain the partition, we need to find and delete them
     const filtersCachePrefix = `filters:${partitionKey}:`;
@@ -410,26 +479,38 @@ export default class TableLike<Type extends TableEntity<object>> {
   /**
    * Uploads/inserts a single entity to the table
    */
-  public async uploadEntity(entity: Type): Promise<{ success: boolean; error?: string }> {
+  public async uploadEntity(
+    entity: Type
+  ): Promise<{ success: boolean; error?: string }> {
     try {
       await this.client.createEntity(entity);
-      
+
       // Invalidate cache for the entity's partition
       if (entity.partitionKey) {
         this.invalidateCacheForPartition(entity.partitionKey.toString());
       }
-      
+
       return { success: true };
     } catch (error: any) {
-      console.error('Error uploading entity:', error);
-      return { success: false, error: error.message || 'Unknown error occurred' };
+      console.error("Error uploading entity:", error);
+      return {
+        success: false,
+        error: error.message || "Unknown error occurred",
+      };
     }
   }
 
   /**
    * Uploads multiple entities in batch
    */
-  public async uploadEntities(entities: Type[]): Promise<{ success: boolean; uploaded: number; failed: number; errors: string[] }> {
+  public async uploadEntities(
+    entities: Type[]
+  ): Promise<{
+    success: boolean;
+    uploaded: number;
+    failed: number;
+    errors: string[];
+  }> {
     let uploaded = 0;
     let failed = 0;
     const errors: string[] = [];
@@ -446,7 +527,9 @@ export default class TableLike<Type extends TableEntity<object>> {
       } else {
         failed++;
         if (result.error) {
-          errors.push(`Failed to upload entity with key ${entity.rowKey}: ${result.error}`);
+          errors.push(
+            `Failed to upload entity with key ${entity.rowKey}: ${result.error}`
+          );
         }
       }
     }
@@ -454,12 +537,12 @@ export default class TableLike<Type extends TableEntity<object>> {
     // Invalidate cache for all affected partitions
     // Note: We do this after processing to avoid redundant invalidations
     // since uploadEntity already invalidates per entity
-    
+
     return {
       success: failed === 0,
       uploaded,
       failed,
-      errors
+      errors,
     };
   }
 }
