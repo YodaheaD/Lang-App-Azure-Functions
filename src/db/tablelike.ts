@@ -1,5 +1,6 @@
 import { TableClient, TableEntity } from "@azure/data-tables";
-
+import dotenv from "dotenv";
+dotenv.config();
 const connectionString = process.env.AzureWebJobsStorage;
 
 type CacheEntry<T> = {
@@ -65,21 +66,21 @@ export default class TableLike<Type extends TableEntity<object>> {
    */
   private buildODataFilter(
     partitionKey: string,
-    filters?: FilterOptions
+    filters?: FilterOptions,
   ): string {
     let filterParts = [`PartitionKey eq '${partitionKey}'`];
 
     if (filters) {
       if (filters.class && filters.class.length > 0) {
         const classFilters = filters.class.map(
-          (c) => `class eq '${c.replace(/'/g, "''")}'`
+          (c) => `class eq '${c.replace(/'/g, "''")}'`,
         );
         filterParts.push(`(${classFilters.join(" or ")})`);
       }
 
       if (filters.class2 && filters.class2.length > 0) {
         const class2Filters = filters.class2.map(
-          (c) => `class2 eq '${c.replace(/'/g, "''")}'`
+          (c) => `class2 eq '${c.replace(/'/g, "''")}'`,
         );
         filterParts.push(`(${class2Filters.join(" or ")})`);
       }
@@ -94,7 +95,7 @@ export default class TableLike<Type extends TableEntity<object>> {
    */
   private async getEntitiesByPartitionKey(
     partitionKey: string,
-    filters?: FilterOptions
+    filters?: FilterOptions,
   ): Promise<Type[]> {
     const cacheKey = `entities:${partitionKey}`;
     const countCacheKey = `count:${partitionKey}`;
@@ -139,7 +140,7 @@ export default class TableLike<Type extends TableEntity<object>> {
    */
   private filterEntitiesInMemory(
     entities: Type[],
-    filters?: FilterOptions
+    filters?: FilterOptions,
   ): Type[] {
     if (!filters) {
       return entities;
@@ -246,13 +247,47 @@ export default class TableLike<Type extends TableEntity<object>> {
     return sortedEntities;
   }
 
+  /** Simple pagination, use listEntities, only accepts page and limit */
+  public async SimplePaginateEntities(
+    limit: number,
+    page: number,
+  ): Promise<PaginatedResult<Type> | { error: string }> {
+    if (!Number.isInteger(page) || !Number.isInteger(limit) || page < 1 || limit < 1) {
+      return { error: "Page and limit must be positive numbers" };
+    }
+
+    let data: Type[] = [];
+    let total = 0;
+    const iter = this.client
+      .listEntities<Type>()
+      .byPage({ maxPageSize: limit });
+
+    let currentPage = 1;
+
+    for await (const segment of iter) {
+      total += segment.length;
+      if (currentPage === page) {
+        data = segment as Type[];
+      }
+      currentPage++;
+    }
+
+    return {
+      data,
+      page,
+      limit,
+      total,
+      totalFiltered: total,
+    };
+  }
+
   /**
    * Applies pagination to an array of entities
    */
   private paginateEntities(
     entities: Type[],
     page: number,
-    limit: number
+    limit: number,
   ): Type[] {
     const startIndex = (page - 1) * limit;
     const endIndex = startIndex + limit;
@@ -264,7 +299,7 @@ export default class TableLike<Type extends TableEntity<object>> {
    */
   public async getAvailableFilters(
     language: string,
-    contextFilters?: FilterOptions
+    contextFilters?: FilterOptions,
   ): Promise<AvailableFilters | { error: string }> {
     const partitionKey = this.mapLanguageToPartitionKey(language);
     if (!partitionKey) {
@@ -274,7 +309,7 @@ export default class TableLike<Type extends TableEntity<object>> {
     try {
       // Create cache key that includes context filters
       const filtersCacheKey = `filters:${partitionKey}:${JSON.stringify(
-        contextFilters || {}
+        contextFilters || {},
       )}`;
 
       // Check cache first
@@ -286,7 +321,7 @@ export default class TableLike<Type extends TableEntity<object>> {
       // Get entities that match the context filters (if any)
       const entities = await this.getEntitiesByPartitionKey(
         partitionKey,
-        contextFilters
+        contextFilters,
       );
 
       const classValues = new Set<string>();
@@ -332,7 +367,7 @@ export default class TableLike<Type extends TableEntity<object>> {
    */
   public async getDataForLanguage(
     language: string,
-    options: LanguageQueryOptions = {}
+    options: LanguageQueryOptions = {},
   ): Promise<PaginatedResult<Type> | { error: string }> {
     const { page = 1, limit = 10, sortForJapanese = false, filters } = options;
 
@@ -351,7 +386,7 @@ export default class TableLike<Type extends TableEntity<object>> {
       // Get available filters for this language, contextually filtered
       const availableFiltersResult = await this.getAvailableFilters(
         language,
-        filters
+        filters,
       );
       const availableFilters =
         "error" in availableFiltersResult ? undefined : availableFiltersResult;
@@ -363,7 +398,7 @@ export default class TableLike<Type extends TableEntity<object>> {
       // Get filtered entities
       let entities = await this.getEntitiesByPartitionKey(
         partitionKey,
-        filters
+        filters,
       );
       const filteredCount = entities.length;
 
@@ -406,7 +441,7 @@ export default class TableLike<Type extends TableEntity<object>> {
       // Get available filters for this language, contextually filtered
       const availableFiltersResult = await this.getAvailableFilters(
         language,
-        {}
+        {},
       );
       const availableFilters =
         "error" in availableFiltersResult ? undefined : availableFiltersResult;
@@ -423,7 +458,7 @@ export default class TableLike<Type extends TableEntity<object>> {
    * Gets the total count of entities for a specific language
    */
   public async getCountForLanguage(
-    language: string
+    language: string,
   ): Promise<number | { error: string }> {
     // Map language to partition key
     const partitionKey = this.mapLanguageToPartitionKey(language);
@@ -480,7 +515,7 @@ export default class TableLike<Type extends TableEntity<object>> {
    * Uploads/inserts a single entity to the table
    */
   public async uploadEntity(
-    entity: Type
+    entity: Type,
   ): Promise<{ success: boolean; error?: string }> {
     try {
       await this.client.createEntity(entity);
@@ -503,9 +538,7 @@ export default class TableLike<Type extends TableEntity<object>> {
   /**
    * Uploads multiple entities in batch
    */
-  public async uploadEntities(
-    entities: Type[]
-  ): Promise<{
+  public async uploadEntities(entities: Type[]): Promise<{
     success: boolean;
     uploaded: number;
     failed: number;
@@ -528,7 +561,7 @@ export default class TableLike<Type extends TableEntity<object>> {
         failed++;
         if (result.error) {
           errors.push(
-            `Failed to upload entity with key ${entity.rowKey}: ${result.error}`
+            `Failed to upload entity with key ${entity.rowKey}: ${result.error}`,
           );
         }
       }

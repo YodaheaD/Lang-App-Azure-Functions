@@ -7,6 +7,7 @@ import {
 } from "@azure/functions";
 import { wordsTable } from "../db/wordsTable";
 import corsHeaders from "../utils/corsHeader";
+import { jpalphabetExamplesTable } from "../db/jpalphabetExamples";
 
 // -> GetDataForLang - returns paginated word data for a specified language with optional filters
 export async function GetDataForLang(
@@ -100,7 +101,8 @@ export async function GetDataForLang(
   }
 }
 
-export async function GetFiltersForLang(
+// -> GetDataForLang - returns paginated word data for a specified language with optional filters
+export async function GetJPWordsForLang(
   request: HttpRequest,
   context: InvocationContext
 ): Promise<HttpResponseInit> {
@@ -108,10 +110,18 @@ export async function GetFiltersForLang(
 
   try {
     // Extract parameters from request
-    const language = request.params.language;
+ 
+    const pageParam = request.query.get("page");
+    const limitParam = request.query.get("limit");
+
+    const page = pageParam ? parseInt(pageParam, 10) : 1;
+    const limit = limitParam ? parseInt(limitParam, 10) : 10;
+
+    // Parse filter parameters
+    const filters: any = {};
 
     // Use the wordsTable to get data
-    const result = await wordsTable.getFiltersOnly(language);
+    const result = await jpalphabetExamplesTable.SimplePaginateEntities(limit, page);
 
     // Handle error responses
     if ("error" in result) {
@@ -127,6 +137,76 @@ export async function GetFiltersForLang(
         body: JSON.stringify({ error: result.error }),
         headers: { "Content-Type": "application/json", ...corsHeaders },
       };
+    }
+
+    // Return enterprise-standard response with pagination and filter metadata
+    const response = {
+      data: result.data,
+      pagination: {
+        page: result.page,
+        limit: result.limit,
+        total: result.total,
+        // keep totalFiltered the same as total since we don't have filters for this table
+        totalFiltered: result.total,
+        hasNext: result.page * result.limit < result.totalFiltered,
+        hasPrevious: result.page > 1,
+      },
+      filters: {
+        applied:   {},
+        available:  { class: [], class2: [] },
+      },
+      language: "japanese",
+    };
+
+    return {
+      status: 200,
+      body: JSON.stringify(response),
+      headers: { "Content-Type": "application/json", ...corsHeaders },
+    };
+  } catch (error) {
+    context.log("Error processing request:", error);
+    return {
+      status: 500,
+      body: JSON.stringify({ error: "Internal server error" }),
+      headers: { "Content-Type": "application/json", ...corsHeaders },
+    };
+  }
+}
+
+export async function GetFiltersForLang(
+  request: HttpRequest,
+  context: InvocationContext
+): Promise<HttpResponseInit> {
+  context.log(`Http function processed request for url "${request.url}"`);
+
+  try {
+    // Extract parameters from request
+    const language = request.params.language;
+
+    // Use the wordsTable to get data
+    let result = await wordsTable.getFiltersOnly(language);
+
+    // Handle error responses
+    if ("error" in result) {
+      const status =
+        result.error === "Invalid language"
+          ? 404
+          : result.error === "Page and limit must be positive numbers"
+          ? 400
+          : 500;
+
+      return {
+        status,
+        body: JSON.stringify({ error: result.error }),
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      };
+    }
+
+    //if language is Japanese, manually add "words" to the class filter options
+    if (language === "japanese") {
+      if (!result.availableFilters.class.includes("words")) {
+        result.availableFilters.class.push("words");
+      }
     }
 
     // Return enterprise-standard response with pagination and filter metadata
@@ -198,6 +278,13 @@ app.http("GetDataForLang", {
   authLevel: "anonymous",
   route: "data/fetch/{language}",
   handler: GetDataForLang,
+});
+
+app.http("GetJPWordsForLang", {
+  methods: ["GET"],
+  authLevel: "anonymous",
+  route: "data/fetchJPWords",
+  handler: GetJPWordsForLang,
 });
 app.http("GetFiltersForLang", {
   methods: ["GET"],
